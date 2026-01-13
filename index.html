@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ant Colony Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Ant Colony Simulator</h1>
+
+        <div class="controls">
+            <div class="tool-section">
+                <h3>Place Objects:</h3>
+                <button id="placeNest" class="tool-btn active" data-tool="nest">🏠 Nest</button>
+                <button id="placeFood" class="tool-btn" data-tool="food">🍎 Food</button>
+                <button id="placeWall" class="tool-btn" data-tool="wall">🧱 Wall</button>
+                <button id="erase" class="tool-btn" data-tool="erase">🗑️ Erase</button>
+            </div>
+
+            <div class="colony-section">
+                <h3>Colony Color:</h3>
+                <button class="colony-btn active" data-colony="0" style="background-color: #ff4444;">Red</button>
+                <button class="colony-btn" data-colony="1" style="background-color: #4444ff;">Blue</button>
+                <button class="colony-btn" data-colony="2" style="background-color: #44ff44;">Green</button>
+                <button class="colony-btn" data-colony="3" style="background-color: #ffaa00;">Orange</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Settings:</h3>
+                <label>
+                    Spawn Rate: <span id="spawnRateDisplay">30</span> ticks
+                    <input type="range" id="spawnRate" min="10" max="100" value="30">
+                </label>
+                <label>
+                    Game Speed: <span id="gameSpeedDisplay">1.0</span>x
+                    <input type="range" id="gameSpeed" min="0.5" max="3" step="0.1" value="1.0">
+                </label>
+                <button id="clearAll" class="danger-btn">Clear All</button>
+            </div>
+        </div>
+
+        <div class="stats" id="stats"></div>
+
+        <canvas id="gameCanvas" width="1200" height="700"></canvas>
+
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ul>
+                <li>Click to place nests, food, or walls</li>
+                <li>Click and drag to draw walls or place multiple food items</li>
+                <li>Ants will spawn from nests and search for food</li>
+                <li>Different colored colonies will fight each other</li>
+                <li>Ants bring food back to their nest to increase colony population</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
