@@ -257,26 +257,29 @@
             // Ant settings
             ANT_SPEED: 1.8,
             ANT_SIZE: 4,
-            ANT_SPAWN_RATE: 0.025,
-            ANT_MAX_PER_COLONY: 150,
-            ANT_VISION_RANGE: 60,
+            ANT_BASE_SPAWN_RATE: 0.005, // Very slow base spawn
+            ANT_FOOD_SPAWN_BONUS: 0.03, // Bonus spawn rate when food is available
+            ANT_MAX_PER_COLONY: 100,
+            ANT_VISION_RANGE: 80,
             ANT_ATTACK_RANGE: 12,
             ANT_ATTACK_DAMAGE: 0.4,
             ANT_HEALTH: 8,
+            ANT_LIFESPAN: 2000, // Frames until natural death (about 30 seconds at 60fps)
+            ANT_LIFESPAN_VARIANCE: 500, // Random variance in lifespan
 
             // Supermajor settings
             SUPERMAJOR_SIZE: 8,
-            SUPERMAJOR_SPEED: 1.2,
+            SUPERMAJOR_SPEED: 1.4,
             SUPERMAJOR_HEALTH: 25,
             SUPERMAJOR_DAMAGE: 1.5,
-            SUPERMAJOR_SPAWN_CHANCE: 0.08, // 8% chance a spawned ant is a supermajor
-            SUPERMAJOR_MAX_PER_COLONY: 15,
+            SUPERMAJOR_MAX_PER_COLONY: 10,
+            SUPERMAJOR_LIFESPAN: 3000,
 
             // Pheromone settings
             PHEROMONE_STRENGTH: 150,
-            PHEROMONE_DECAY: 0.992,
+            PHEROMONE_DECAY: 0.985,
             PHEROMONE_MIN: 0.5,
-            PHEROMONE_CELL_SIZE: 6,
+            PHEROMONE_CELL_SIZE: 8,
 
             // Food settings
             FOOD_SIZE: 10,
@@ -288,7 +291,7 @@
 
             // Colony settings
             COLONY_SIZE: 30,
-            COLONY_FOOD_TO_SPAWN: 8,
+            COLONY_FOOD_PER_ANT: 3, // Food needed to spawn one ant
         };
 
         // ============================================
@@ -519,32 +522,47 @@
                     this.size = CONFIG.SUPERMAJOR_SIZE;
                     this.speed = CONFIG.SUPERMAJOR_SPEED;
                     this.damage = CONFIG.SUPERMAJOR_DAMAGE;
+                    this.lifespan = CONFIG.SUPERMAJOR_LIFESPAN;
                 } else {
                     this.health = CONFIG.ANT_HEALTH;
                     this.maxHealth = CONFIG.ANT_HEALTH;
                     this.size = CONFIG.ANT_SIZE;
                     this.speed = CONFIG.ANT_SPEED;
                     this.damage = CONFIG.ANT_ATTACK_DAMAGE;
+                    this.lifespan = CONFIG.ANT_LIFESPAN + (Math.random() - 0.5) * CONFIG.ANT_LIFESPAN_VARIANCE;
                 }
 
+                this.age = 0;
                 this.targetEnemy = null;
                 this.wanderAngle = 0;
                 this.stuckTimer = 0;
                 this.lastX = x;
                 this.lastY = y;
                 this.legPhase = Math.random() * Math.PI * 2;
+
+                // Remember last known food location
+                this.lastFoodX = null;
+                this.lastFoodY = null;
             }
 
             update(game) {
+                // Age the ant
+                this.age += game.speedMultiplier;
+                if (this.age > this.lifespan) {
+                    this.health = 0; // Natural death
+                    return;
+                }
+
                 this.legPhase += 0.3 * game.speedMultiplier;
 
                 // Check if stuck
                 const moved = distance(this.x, this.y, this.lastX, this.lastY);
                 if (moved < 0.3) {
                     this.stuckTimer++;
-                    if (this.stuckTimer > 20) {
+                    if (this.stuckTimer > 30) {
                         this.targetAngle = randomAngle();
                         this.stuckTimer = 0;
+                        this.wanderAngle = 0;
                     }
                 } else {
                     this.stuckTimer = 0;
@@ -552,9 +570,10 @@
                 this.lastX = this.x;
                 this.lastY = this.y;
 
-                // Combat check - all ants fight, but supermajors prioritize it
+                // Combat check
                 this.targetEnemy = null;
                 let closestEnemyDist = Infinity;
+                const visionRange = this.isSupermajor ? CONFIG.ANT_VISION_RANGE * 2 : CONFIG.ANT_VISION_RANGE;
 
                 for (const colony of game.colonies) {
                     if (colony.color === this.colony.color) continue;
@@ -562,22 +581,24 @@
                     const allAnts = [...colony.ants, ...colony.supermajors];
                     for (const ant of allAnts) {
                         const dist = distance(this.x, this.y, ant.x, ant.y);
-                        const attackRange = this.isSupermajor ? CONFIG.ANT_ATTACK_RANGE * 1.5 : CONFIG.ANT_ATTACK_RANGE;
 
-                        if (dist < attackRange && dist < closestEnemyDist) {
+                        // Supermajors detect enemies from further away
+                        if (dist < visionRange && dist < closestEnemyDist) {
                             closestEnemyDist = dist;
                             this.targetEnemy = ant;
                         }
                     }
                 }
 
+                // Attack if in range
                 if (this.targetEnemy) {
-                    this.attack(this.targetEnemy);
-                    const dx = this.targetEnemy.x - this.x;
-                    const dy = this.targetEnemy.y - this.y;
-                    this.targetAngle = Math.atan2(dy, dx);
+                    const attackRange = this.isSupermajor ? CONFIG.ANT_ATTACK_RANGE * 1.5 : CONFIG.ANT_ATTACK_RANGE;
+                    if (closestEnemyDist < attackRange) {
+                        this.attack(this.targetEnemy);
+                    }
+                    // Move towards enemy
+                    this.targetAngle = Math.atan2(this.targetEnemy.y - this.y, this.targetEnemy.x - this.x);
                 } else if (this.isSupermajor) {
-                    // Supermajors patrol around the colony or hunt enemies
                     this.patrol(game);
                 } else if (this.hasFood) {
                     this.returnToColony(game);
@@ -586,7 +607,7 @@
                 }
 
                 // Smooth angle interpolation
-                this.angle = lerpAngle(this.angle, this.targetAngle, 0.15);
+                this.angle = lerpAngle(this.angle, this.targetAngle, 0.2);
 
                 // Move
                 const speed = this.speed * game.speedMultiplier;
@@ -598,7 +619,7 @@
                     this.x = newX;
                     this.y = newY;
                 } else {
-                    this.targetAngle = randomAngle();
+                    this.targetAngle += Math.PI / 2 + (Math.random() - 0.5);
                 }
 
                 // Boundary collision
@@ -612,51 +633,35 @@
                     this.y = clamp(this.y, margin, game.canvas.height - margin);
                 }
 
-                // Deposit pheromones (workers only)
-                if (!this.isSupermajor) {
-                    if (this.hasFood) {
-                        game.pheromones.deposit(this.x, this.y, this.colony.color, 'toFood', 3);
-                    } else {
-                        game.pheromones.deposit(this.x, this.y, this.colony.color, 'toHome', 1.5);
-                    }
+                // Deposit pheromones (workers with food only - marks path TO food)
+                if (!this.isSupermajor && this.hasFood) {
+                    game.pheromones.deposit(this.x, this.y, this.colony.color, 'toFood', 5);
                 }
             }
 
             patrol(game) {
-                // Supermajors patrol around their colony or move towards detected enemies
+                // Supermajors guard the colony - stay relatively close
                 const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
+                const patrolRadius = CONFIG.COLONY_SIZE * 3;
 
-                // Look for enemies in a wider range
-                let nearestEnemy = null;
-                let nearestDist = CONFIG.ANT_VISION_RANGE * 2;
-
-                for (const colony of game.colonies) {
-                    if (colony.color === this.colony.color) continue;
-                    const allAnts = [...colony.ants, ...colony.supermajors];
-                    for (const ant of allAnts) {
-                        const dist = distance(this.x, this.y, ant.x, ant.y);
-                        if (dist < nearestDist) {
-                            nearestDist = dist;
-                            nearestEnemy = ant;
-                        }
-                    }
-                }
-
-                if (nearestEnemy) {
-                    // Chase enemy
-                    this.targetAngle = Math.atan2(nearestEnemy.y - this.y, nearestEnemy.x - this.x);
-                } else if (distToColony > CONFIG.COLONY_SIZE * 4) {
-                    // Return closer to colony
+                if (distToColony > patrolRadius) {
+                    // Too far, head back towards colony
                     this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
+                } else if (distToColony < CONFIG.COLONY_SIZE * 1.5) {
+                    // Too close, move outward
+                    this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
                 } else {
-                    // Patrol randomly around colony
-                    this.wanderAngle += (Math.random() - 0.5) * 0.3;
-                    this.targetAngle += this.wanderAngle * 0.1;
+                    // Patrol in a rough circle around colony
+                    const angleToColony = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
+                    // Move perpendicular to colony (orbit)
+                    this.targetAngle = angleToColony + Math.PI / 2 + (Math.random() - 0.5) * 0.5;
                 }
             }
 
             searchForFood(game) {
-                // Check for nearby food
+                const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
+
+                // Check for nearby food (direct vision)
                 const nearestFood = game.foodGrid.findNearest(this.x, this.y, CONFIG.ANT_VISION_RANGE);
 
                 if (nearestFood) {
@@ -665,25 +670,39 @@
                         const taken = game.foodGrid.take(nearestFood.x, nearestFood.y, 1);
                         if (taken > 0) {
                             this.hasFood = true;
-                            // Turn towards colony, not just backwards
+                            // Remember where food was
+                            this.lastFoodX = nearestFood.x;
+                            this.lastFoodY = nearestFood.y;
+                            // Turn towards colony
                             this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
                             return;
                         }
                     }
+                    // Move towards visible food
                     this.targetAngle = Math.atan2(nearestFood.y - this.y, nearestFood.x - this.x);
                     return;
                 }
 
-                // Follow pheromone trail to food
-                const pheromone = game.pheromones.sampleArea(this.x, this.y, this.colony.color, 'toFood', 3);
-                if (pheromone.bestDir && pheromone.bestStrength > 2) {
-                    const targetAngle = Math.atan2(pheromone.bestDir.dy, pheromone.bestDir.dx);
-                    this.targetAngle = lerpAngle(this.targetAngle, targetAngle, 0.4);
+                // Follow pheromone trails (only when away from colony)
+                if (distToColony > CONFIG.COLONY_SIZE * 2) {
+                    const pheromone = game.pheromones.sampleArea(this.x, this.y, this.colony.color, 'toFood', 3);
+                    if (pheromone.bestDir && pheromone.bestStrength > 5) {
+                        const targetAngle = Math.atan2(pheromone.bestDir.dy, pheromone.bestDir.dx);
+                        this.targetAngle = lerpAngle(this.targetAngle, targetAngle, 0.3);
+                        return;
+                    }
+                }
+
+                // Wander outward from colony
+                if (distToColony < CONFIG.COLONY_SIZE * 2) {
+                    // Move away from colony
+                    const awayAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
+                    this.targetAngle = awayAngle + (Math.random() - 0.5) * 1.0;
                 } else {
-                    // Wander
-                    this.wanderAngle += (Math.random() - 0.5) * 0.4;
-                    this.wanderAngle = clamp(this.wanderAngle, -1, 1);
-                    this.targetAngle += this.wanderAngle * 0.08;
+                    // Random wander
+                    this.wanderAngle += (Math.random() - 0.5) * 0.5;
+                    this.wanderAngle = clamp(this.wanderAngle, -1.5, 1.5);
+                    this.targetAngle += this.wanderAngle * 0.1;
                 }
             }
 
@@ -693,17 +712,19 @@
                 if (dist < CONFIG.COLONY_SIZE) {
                     this.hasFood = false;
                     this.colony.foodStored++;
-                    // Turn away from colony to go find more food
-                    this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
+
+                    // If we remember where food was, head back there
+                    if (this.lastFoodX !== null) {
+                        this.targetAngle = Math.atan2(this.lastFoodY - this.y, this.lastFoodX - this.x);
+                    } else {
+                        // Otherwise head outward
+                        this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
+                    }
                     return;
                 }
 
-                // Head directly towards colony with slight wandering
-                const toColony = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-
-                // Add small random variation to prevent perfect lines
-                const wobble = (Math.random() - 0.5) * 0.2;
-                this.targetAngle = toColony + wobble;
+                // Head directly towards colony
+                this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
             }
 
             attack(enemy) {
@@ -860,24 +881,62 @@
                 this.color = color;
                 this.ants = [];
                 this.supermajors = [];
-                this.foodStored = 0;
+                this.foodStored = 5; // Start with some food
                 this.spawnAccumulator = 0;
+                this.supermajorSpawnAccumulator = 0;
+                this.enemiesNearby = false;
             }
 
             update(game) {
-                const totalAnts = this.ants.length + this.supermajors.length;
+                // Check for nearby enemies (for supermajor spawning)
+                this.enemiesNearby = false;
+                const threatRange = CONFIG.COLONY_SIZE * 5;
 
-                if (totalAnts < CONFIG.ANT_MAX_PER_COLONY) {
-                    this.spawnAccumulator += CONFIG.ANT_SPAWN_RATE * game.speedMultiplier;
+                for (const colony of game.colonies) {
+                    if (colony.color === this.color) continue;
+                    const allAnts = [...colony.ants, ...colony.supermajors];
+                    for (const ant of allAnts) {
+                        if (distance(this.x, this.y, ant.x, ant.y) < threatRange) {
+                            this.enemiesNearby = true;
+                            break;
+                        }
+                    }
+                    if (this.enemiesNearby) break;
+                }
 
-                    if (this.foodStored >= CONFIG.COLONY_FOOD_TO_SPAWN) {
-                        this.spawnAccumulator += CONFIG.ANT_SPAWN_RATE * 2.5 * game.speedMultiplier;
-                        this.foodStored -= CONFIG.COLONY_FOOD_TO_SPAWN * 0.008;
+                const totalWorkers = this.ants.length;
+
+                // Spawn workers based on food
+                if (totalWorkers < CONFIG.ANT_MAX_PER_COLONY) {
+                    // Base spawn rate (very slow)
+                    this.spawnAccumulator += CONFIG.ANT_BASE_SPAWN_RATE * game.speedMultiplier;
+
+                    // Food-based spawning: consume food to spawn ants
+                    if (this.foodStored >= CONFIG.COLONY_FOOD_PER_ANT) {
+                        this.spawnAccumulator += CONFIG.ANT_FOOD_SPAWN_BONUS * game.speedMultiplier;
                     }
 
-                    while (this.spawnAccumulator >= 1) {
-                        this.spawnAnt();
+                    while (this.spawnAccumulator >= 1 && this.foodStored >= CONFIG.COLONY_FOOD_PER_ANT) {
+                        this.spawnWorker();
+                        this.foodStored -= CONFIG.COLONY_FOOD_PER_ANT;
                         this.spawnAccumulator--;
+                    }
+
+                    // Cap accumulator if no food
+                    if (this.foodStored < CONFIG.COLONY_FOOD_PER_ANT) {
+                        this.spawnAccumulator = Math.min(this.spawnAccumulator, 0.5);
+                    }
+                }
+
+                // Spawn supermajors only when enemies are nearby
+                if (this.enemiesNearby && this.supermajors.length < CONFIG.SUPERMAJOR_MAX_PER_COLONY) {
+                    this.supermajorSpawnAccumulator += 0.01 * game.speedMultiplier;
+
+                    // Need extra food for supermajors
+                    if (this.supermajorSpawnAccumulator >= 1 && this.foodStored >= CONFIG.COLONY_FOOD_PER_ANT * 3) {
+                        this.spawnSupermajor();
+                        this.foodStored -= CONFIG.COLONY_FOOD_PER_ANT * 3;
+                        this.supermajorSpawnAccumulator = 0;
                     }
                 }
 
@@ -900,21 +959,20 @@
                 }
             }
 
-            spawnAnt() {
+            spawnWorker() {
                 const angle = randomAngle();
-                const dist = CONFIG.COLONY_SIZE * 0.7;
+                const dist = CONFIG.COLONY_SIZE * 0.8;
                 const x = this.x + Math.cos(angle) * dist;
                 const y = this.y + Math.sin(angle) * dist;
+                this.ants.push(new Ant(x, y, this, false));
+            }
 
-                // Chance to spawn supermajor
-                const isSupermajor = Math.random() < CONFIG.SUPERMAJOR_SPAWN_CHANCE &&
-                                     this.supermajors.length < CONFIG.SUPERMAJOR_MAX_PER_COLONY;
-
-                if (isSupermajor) {
-                    this.supermajors.push(new Ant(x, y, this, true));
-                } else {
-                    this.ants.push(new Ant(x, y, this, false));
-                }
+            spawnSupermajor() {
+                const angle = randomAngle();
+                const dist = CONFIG.COLONY_SIZE * 0.8;
+                const x = this.x + Math.cos(angle) * dist;
+                const y = this.y + Math.sin(angle) * dist;
+                this.supermajors.push(new Ant(x, y, this, true));
             }
 
             draw(ctx) {
@@ -966,11 +1024,30 @@
                 ctx.fillStyle = this.color;
                 ctx.shadowColor = this.color;
                 ctx.shadowBlur = 5;
-                ctx.font = 'bold 11px monospace';
+                ctx.font = 'bold 10px monospace';
                 ctx.textAlign = 'center';
-                ctx.fillText(`${this.ants.length}`, this.x - 15, this.y - CONFIG.COLONY_SIZE - 8);
+
+                // Ants count
+                ctx.fillText(`${this.ants.length}`, this.x - 20, this.y - CONFIG.COLONY_SIZE - 8);
+
+                // Supermajors count
                 ctx.fillStyle = '#fff';
-                ctx.fillText(`+${this.supermajors.length}`, this.x + 15, this.y - CONFIG.COLONY_SIZE - 8);
+                ctx.fillText(`+${this.supermajors.length}`, this.x + 5, this.y - CONFIG.COLONY_SIZE - 8);
+
+                // Food stored
+                ctx.fillStyle = '#0f0';
+                ctx.shadowColor = '#0f0';
+                ctx.fillText(`F:${Math.floor(this.foodStored)}`, this.x, this.y + CONFIG.COLONY_SIZE + 12);
+
+                // Alert indicator if enemies nearby
+                if (this.enemiesNearby) {
+                    ctx.fillStyle = '#f00';
+                    ctx.shadowColor = '#f00';
+                    ctx.shadowBlur = 10;
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText('!', this.x + 25, this.y - CONFIG.COLONY_SIZE - 8);
+                }
+
                 ctx.shadowBlur = 0;
             }
         }
@@ -1311,19 +1388,11 @@
                         for (let col = 0; col < this.pheromones.cols; col++) {
                             const idx = row * this.pheromones.cols + col;
                             const toFood = grid.toFood[idx];
-                            const toHome = grid.toHome[idx];
 
-                            // Draw food trails (brighter)
-                            if (toFood > 2) {
+                            // Draw food trails - these show paths from colony to food
+                            if (toFood > 3) {
                                 const strength = Math.min(toFood / CONFIG.PHEROMONE_STRENGTH, 1);
-                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.5})`;
-                                ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
-                            }
-
-                            // Draw home trails (dimmer)
-                            if (toHome > 2) {
-                                const strength = Math.min(toHome / CONFIG.PHEROMONE_STRENGTH, 1);
-                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.25})`;
+                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.4})`;
                                 ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
                             }
                         }
