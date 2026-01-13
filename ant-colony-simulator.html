@@ -151,6 +151,9 @@
             display: block;
             background: #000;
             cursor: crosshair;
+            position: absolute;
+            top: 0;
+            left: 0;
         }
 
         #instructions {
@@ -164,6 +167,7 @@
             max-width: 280px;
             border: 1px solid #333;
             backdrop-filter: blur(5px);
+            z-index: 10;
         }
 
         #instructions h3 {
@@ -190,13 +194,6 @@
             font-size: 0.7rem;
             color: #0f0;
             border: 1px solid #333;
-        }
-
-        #pheromoneCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            pointer-events: none;
         }
     </style>
 </head>
@@ -239,7 +236,6 @@
     </div>
 
     <div id="canvas-container">
-        <canvas id="pheromoneCanvas"></canvas>
         <canvas id="gameCanvas"></canvas>
         <div id="instructions">
             <h3>Controls</h3>
@@ -1028,8 +1024,6 @@
             constructor() {
                 this.canvas = document.getElementById('gameCanvas');
                 this.ctx = this.canvas.getContext('2d');
-                this.pheromoneCanvas = document.getElementById('pheromoneCanvas');
-                this.pheromoneCtx = this.pheromoneCanvas.getContext('2d');
 
                 this.colonies = [];
                 this.walls = [];
@@ -1046,7 +1040,6 @@
                 this.lastFrameTime = 0;
                 this.frameCount = 0;
                 this.fps = 0;
-                this.pheromoneRenderCounter = 0;
 
                 this.setupCanvas();
                 this.setupEventListeners();
@@ -1062,8 +1055,6 @@
                 const container = document.getElementById('canvas-container');
                 this.canvas.width = container.clientWidth;
                 this.canvas.height = container.clientHeight;
-                this.pheromoneCanvas.width = container.clientWidth;
-                this.pheromoneCanvas.height = container.clientHeight;
 
                 if (this.pheromones) {
                     this.pheromones.resize(this.canvas.width, this.canvas.height);
@@ -1237,11 +1228,8 @@
                     this.ctx.stroke();
                 }
 
-                // Draw pheromone trails (on separate canvas, updated less frequently)
-                this.pheromoneRenderCounter++;
-                if (this.pheromoneRenderCounter % 2 === 0) {
-                    this.drawPheromones();
-                }
+                // Draw pheromone trails
+                this.drawPheromones();
 
                 // Draw walls
                 for (const wall of this.walls) {
@@ -1317,12 +1305,8 @@
             }
 
             drawPheromones() {
-                const ctx = this.pheromoneCtx;
+                const ctx = this.ctx;
                 const cellSize = this.pheromones.cellSize;
-
-                // Clear with fade effect
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-                ctx.fillRect(0, 0, this.pheromoneCanvas.width, this.pheromoneCanvas.height);
 
                 for (const [color, grid] of this.pheromones.grids) {
                     const rgb = hexToRgb(color);
@@ -1336,14 +1320,14 @@
                             // Draw food trails (brighter)
                             if (toFood > 2) {
                                 const strength = Math.min(toFood / CONFIG.PHEROMONE_STRENGTH, 1);
-                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.6})`;
+                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.5})`;
                                 ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
                             }
 
                             // Draw home trails (dimmer)
                             if (toHome > 2) {
                                 const strength = Math.min(toHome / CONFIG.PHEROMONE_STRENGTH, 1);
-                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.3})`;
+                                ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${strength * 0.25})`;
                                 ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
                             }
                         }
