@@ -511,10 +511,11 @@
                 this.x = x;
                 this.y = y;
                 this.colony = colony;
-                this.angle = randomAngle();
-                this.targetAngle = this.angle;
-                this.hasFood = false;
                 this.isSupermajor = isSupermajor;
+                this.hasFood = false;
+
+                // Pick initial direction away from colony
+                this.angle = Math.atan2(y - colony.y, x - colony.x) + (Math.random() - 0.5) * 0.5;
 
                 if (isSupermajor) {
                     this.health = CONFIG.SUPERMAJOR_HEALTH;
@@ -533,12 +534,10 @@
                 }
 
                 this.age = 0;
-                this.targetEnemy = null;
-                this.wanderAngle = 0;
-                this.stuckTimer = 0;
-                this.lastX = x;
-                this.lastY = y;
                 this.legPhase = Math.random() * Math.PI * 2;
+
+                // Direction change timer - pick new direction periodically
+                this.directionTimer = Math.random() * 60 + 30;
 
                 // Remember last known food location
                 this.lastFoodX = null;
@@ -549,186 +548,161 @@
                 // Age the ant
                 this.age += game.speedMultiplier;
                 if (this.age > this.lifespan) {
-                    this.health = 0; // Natural death
+                    this.health = 0;
                     return;
                 }
 
                 this.legPhase += 0.3 * game.speedMultiplier;
+                this.directionTimer -= game.speedMultiplier;
 
-                // Check if stuck
-                const moved = distance(this.x, this.y, this.lastX, this.lastY);
-                if (moved < 0.3) {
-                    this.stuckTimer++;
-                    if (this.stuckTimer > 30) {
-                        this.targetAngle = randomAngle();
-                        this.stuckTimer = 0;
-                        this.wanderAngle = 0;
-                    }
-                } else {
-                    this.stuckTimer = 0;
-                }
-                this.lastX = this.x;
-                this.lastY = this.y;
+                // Determine behavior
+                let targetX = null;
+                let targetY = null;
 
-                // Combat check
-                this.targetEnemy = null;
-                let closestEnemyDist = Infinity;
-                const visionRange = this.isSupermajor ? CONFIG.ANT_VISION_RANGE * 2 : CONFIG.ANT_VISION_RANGE;
+                // Check for enemies
+                let closestEnemy = null;
+                let closestEnemyDist = this.isSupermajor ? CONFIG.ANT_VISION_RANGE * 2 : CONFIG.ANT_VISION_RANGE;
 
                 for (const colony of game.colonies) {
                     if (colony.color === this.colony.color) continue;
-
-                    const allAnts = [...colony.ants, ...colony.supermajors];
-                    for (const ant of allAnts) {
+                    for (const ant of [...colony.ants, ...colony.supermajors]) {
                         const dist = distance(this.x, this.y, ant.x, ant.y);
-
-                        // Supermajors detect enemies from further away
-                        if (dist < visionRange && dist < closestEnemyDist) {
+                        if (dist < closestEnemyDist) {
                             closestEnemyDist = dist;
-                            this.targetEnemy = ant;
+                            closestEnemy = ant;
                         }
                     }
                 }
 
-                // Attack if in range
-                if (this.targetEnemy) {
-                    const attackRange = this.isSupermajor ? CONFIG.ANT_ATTACK_RANGE * 1.5 : CONFIG.ANT_ATTACK_RANGE;
-                    if (closestEnemyDist < attackRange) {
-                        this.attack(this.targetEnemy);
+                if (closestEnemy) {
+                    // Fight mode - move towards and attack enemy
+                    targetX = closestEnemy.x;
+                    targetY = closestEnemy.y;
+                    if (closestEnemyDist < (this.isSupermajor ? CONFIG.ANT_ATTACK_RANGE * 1.5 : CONFIG.ANT_ATTACK_RANGE)) {
+                        closestEnemy.health -= this.damage;
                     }
-                    // Move towards enemy
-                    this.targetAngle = Math.atan2(this.targetEnemy.y - this.y, this.targetEnemy.x - this.x);
                 } else if (this.isSupermajor) {
-                    this.patrol(game);
+                    // Supermajor patrol
+                    const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
+                    const idealDist = CONFIG.COLONY_SIZE * 2.5;
+
+                    if (distToColony < CONFIG.COLONY_SIZE * 1.5) {
+                        // Too close, move outward
+                        targetX = this.x + (this.x - this.colony.x);
+                        targetY = this.y + (this.y - this.colony.y);
+                    } else if (distToColony > CONFIG.COLONY_SIZE * 4) {
+                        // Too far, move back
+                        targetX = this.colony.x;
+                        targetY = this.colony.y;
+                    } else if (this.directionTimer <= 0) {
+                        // Patrol - pick a new point around the colony
+                        const patrolAngle = Math.random() * Math.PI * 2;
+                        targetX = this.colony.x + Math.cos(patrolAngle) * idealDist;
+                        targetY = this.colony.y + Math.sin(patrolAngle) * idealDist;
+                        this.directionTimer = 60 + Math.random() * 60;
+                    }
                 } else if (this.hasFood) {
-                    this.returnToColony(game);
+                    // Return to colony with food
+                    const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
+
+                    if (distToColony < CONFIG.COLONY_SIZE) {
+                        // Drop off food
+                        this.hasFood = false;
+                        this.colony.foodStored++;
+
+                        // Head back to where we found food
+                        if (this.lastFoodX !== null) {
+                            targetX = this.lastFoodX;
+                            targetY = this.lastFoodY;
+                        }
+                        this.directionTimer = 0; // Will pick new direction if no food memory
+                    } else {
+                        // Go home
+                        targetX = this.colony.x;
+                        targetY = this.colony.y;
+                    }
+
+                    // Deposit pheromone trail
+                    game.pheromones.deposit(this.x, this.y, this.colony.color, 'toFood', 5);
                 } else {
-                    this.searchForFood(game);
+                    // Search for food
+                    const nearestFood = game.foodGrid.findNearest(this.x, this.y, CONFIG.ANT_VISION_RANGE);
+
+                    if (nearestFood) {
+                        // Found food - go to it
+                        const dist = distance(this.x, this.y, nearestFood.x, nearestFood.y);
+                        if (dist < CONFIG.FOOD_SIZE + this.size) {
+                            // Pick up food
+                            const taken = game.foodGrid.take(nearestFood.x, nearestFood.y, 1);
+                            if (taken > 0) {
+                                this.hasFood = true;
+                                this.lastFoodX = nearestFood.x;
+                                this.lastFoodY = nearestFood.y;
+                            }
+                        }
+                        targetX = nearestFood.x;
+                        targetY = nearestFood.y;
+                    } else {
+                        // No food visible - check pheromones or wander
+                        const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
+
+                        // Follow pheromones if away from colony
+                        if (distToColony > CONFIG.COLONY_SIZE * 3) {
+                            const pheromone = game.pheromones.sampleArea(this.x, this.y, this.colony.color, 'toFood', 3);
+                            if (pheromone.bestDir && pheromone.bestStrength > 5) {
+                                targetX = this.x + pheromone.bestDir.dx * 20;
+                                targetY = this.y + pheromone.bestDir.dy * 20;
+                            }
+                        }
+
+                        // Wander if no target and timer expired
+                        if (targetX === null && this.directionTimer <= 0) {
+                            if (distToColony < CONFIG.COLONY_SIZE * 2) {
+                                // Near colony - pick direction away from it
+                                const awayAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
+                                const spread = (Math.random() - 0.5) * Math.PI * 0.8;
+                                this.angle = awayAngle + spread;
+                            } else {
+                                // Far from colony - random direction with slight home bias
+                                const homeAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
+                                this.angle = randomAngle();
+                                // 20% chance to head somewhat homeward
+                                if (Math.random() < 0.2) {
+                                    this.angle = homeAngle + (Math.random() - 0.5) * Math.PI;
+                                }
+                            }
+                            this.directionTimer = 40 + Math.random() * 80;
+                        }
+                    }
                 }
 
-                // Smooth angle interpolation
-                this.angle = lerpAngle(this.angle, this.targetAngle, 0.2);
+                // Turn towards target if we have one
+                if (targetX !== null && targetY !== null) {
+                    const targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                    // Smooth turning
+                    this.angle = lerpAngle(this.angle, targetAngle, 0.15);
+                }
 
-                // Move
+                // Move forward
                 const speed = this.speed * game.speedMultiplier;
                 let newX = this.x + Math.cos(this.angle) * speed;
                 let newY = this.y + Math.sin(this.angle) * speed;
 
-                // Wall collision
-                if (!game.isWallAt(newX, newY)) {
+                // Wall collision - turn away
+                if (game.isWallAt(newX, newY)) {
+                    this.angle += Math.PI * 0.5 + (Math.random() - 0.5) * 0.5;
+                    this.directionTimer = 10;
+                } else {
                     this.x = newX;
                     this.y = newY;
-                } else {
-                    this.targetAngle += Math.PI / 2 + (Math.random() - 0.5);
                 }
 
                 // Boundary collision
-                const margin = 5;
-                if (this.x < margin || this.x > game.canvas.width - margin) {
-                    this.targetAngle = Math.PI - this.angle;
-                    this.x = clamp(this.x, margin, game.canvas.width - margin);
-                }
-                if (this.y < margin || this.y > game.canvas.height - margin) {
-                    this.targetAngle = -this.angle;
-                    this.y = clamp(this.y, margin, game.canvas.height - margin);
-                }
-
-                // Deposit pheromones (workers with food only - marks path TO food)
-                if (!this.isSupermajor && this.hasFood) {
-                    game.pheromones.deposit(this.x, this.y, this.colony.color, 'toFood', 5);
-                }
-            }
-
-            patrol(game) {
-                // Supermajors guard the colony - stay relatively close
-                const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
-                const patrolRadius = CONFIG.COLONY_SIZE * 3;
-
-                if (distToColony > patrolRadius) {
-                    // Too far, head back towards colony
-                    this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-                } else if (distToColony < CONFIG.COLONY_SIZE * 1.5) {
-                    // Too close, move outward
-                    this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
-                } else {
-                    // Patrol in a rough circle around colony
-                    const angleToColony = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-                    // Move perpendicular to colony (orbit)
-                    this.targetAngle = angleToColony + Math.PI / 2 + (Math.random() - 0.5) * 0.5;
-                }
-            }
-
-            searchForFood(game) {
-                const distToColony = distance(this.x, this.y, this.colony.x, this.colony.y);
-
-                // Check for nearby food (direct vision)
-                const nearestFood = game.foodGrid.findNearest(this.x, this.y, CONFIG.ANT_VISION_RANGE);
-
-                if (nearestFood) {
-                    const dist = distance(this.x, this.y, nearestFood.x, nearestFood.y);
-                    if (dist < CONFIG.FOOD_SIZE) {
-                        const taken = game.foodGrid.take(nearestFood.x, nearestFood.y, 1);
-                        if (taken > 0) {
-                            this.hasFood = true;
-                            // Remember where food was
-                            this.lastFoodX = nearestFood.x;
-                            this.lastFoodY = nearestFood.y;
-                            // Turn towards colony
-                            this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-                            return;
-                        }
-                    }
-                    // Move towards visible food
-                    this.targetAngle = Math.atan2(nearestFood.y - this.y, nearestFood.x - this.x);
-                    return;
-                }
-
-                // Follow pheromone trails (only when away from colony)
-                if (distToColony > CONFIG.COLONY_SIZE * 2) {
-                    const pheromone = game.pheromones.sampleArea(this.x, this.y, this.colony.color, 'toFood', 3);
-                    if (pheromone.bestDir && pheromone.bestStrength > 5) {
-                        const targetAngle = Math.atan2(pheromone.bestDir.dy, pheromone.bestDir.dx);
-                        this.targetAngle = lerpAngle(this.targetAngle, targetAngle, 0.3);
-                        return;
-                    }
-                }
-
-                // Wander outward from colony
-                if (distToColony < CONFIG.COLONY_SIZE * 2) {
-                    // Move away from colony
-                    const awayAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
-                    this.targetAngle = awayAngle + (Math.random() - 0.5) * 1.0;
-                } else {
-                    // Random wander
-                    this.wanderAngle += (Math.random() - 0.5) * 0.5;
-                    this.wanderAngle = clamp(this.wanderAngle, -1.5, 1.5);
-                    this.targetAngle += this.wanderAngle * 0.1;
-                }
-            }
-
-            returnToColony(game) {
-                const dist = distance(this.x, this.y, this.colony.x, this.colony.y);
-
-                if (dist < CONFIG.COLONY_SIZE) {
-                    this.hasFood = false;
-                    this.colony.foodStored++;
-
-                    // If we remember where food was, head back there
-                    if (this.lastFoodX !== null) {
-                        this.targetAngle = Math.atan2(this.lastFoodY - this.y, this.lastFoodX - this.x);
-                    } else {
-                        // Otherwise head outward
-                        this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
-                    }
-                    return;
-                }
-
-                // Head directly towards colony
-                this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-            }
-
-            attack(enemy) {
-                enemy.health -= this.damage;
+                const margin = 10;
+                if (this.x < margin) { this.x = margin; this.angle = Math.random() * Math.PI - Math.PI/2; }
+                if (this.x > game.canvas.width - margin) { this.x = game.canvas.width - margin; this.angle = Math.random() * Math.PI + Math.PI/2; }
+                if (this.y < margin) { this.y = margin; this.angle = Math.random() * Math.PI; }
+                if (this.y > game.canvas.height - margin) { this.y = game.canvas.height - margin; this.angle = -Math.random() * Math.PI; }
             }
 
             draw(ctx) {
