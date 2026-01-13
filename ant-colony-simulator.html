@@ -316,9 +316,11 @@
         }
 
         function lerpAngle(a, b, t) {
-            const diff = b - a;
-            const adjusted = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-            return a + adjusted * t;
+            let diff = b - a;
+            // Normalize diff to [-PI, PI] for shortest path
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            return a + diff * t;
         }
 
         // ============================================
@@ -663,7 +665,8 @@
                         const taken = game.foodGrid.take(nearestFood.x, nearestFood.y, 1);
                         if (taken > 0) {
                             this.hasFood = true;
-                            this.targetAngle = this.angle + Math.PI;
+                            // Turn towards colony, not just backwards
+                            this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
                             return;
                         }
                     }
@@ -690,24 +693,17 @@
                 if (dist < CONFIG.COLONY_SIZE) {
                     this.hasFood = false;
                     this.colony.foodStored++;
-                    this.targetAngle = this.angle + Math.PI;
+                    // Turn away from colony to go find more food
+                    this.targetAngle = Math.atan2(this.y - this.colony.y, this.x - this.colony.x);
                     return;
                 }
 
-                if (dist < CONFIG.ANT_VISION_RANGE * 1.5) {
-                    this.targetAngle = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-                    return;
-                }
+                // Head directly towards colony with slight wandering
+                const toColony = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
 
-                // Follow pheromone trail to home
-                const pheromone = game.pheromones.sampleArea(this.x, this.y, this.colony.color, 'toHome', 3);
-                if (pheromone.bestDir && pheromone.bestStrength > 1) {
-                    const targetAngle = Math.atan2(pheromone.bestDir.dy, pheromone.bestDir.dx);
-                    this.targetAngle = lerpAngle(this.targetAngle, targetAngle, 0.3);
-                } else {
-                    const toColony = Math.atan2(this.colony.y - this.y, this.colony.x - this.x);
-                    this.targetAngle = lerpAngle(this.targetAngle, toColony, 0.15);
-                }
+                // Add small random variation to prevent perfect lines
+                const wobble = (Math.random() - 0.5) * 0.2;
+                this.targetAngle = toColony + wobble;
             }
 
             attack(enemy) {
